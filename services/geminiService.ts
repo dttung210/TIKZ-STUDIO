@@ -1,9 +1,15 @@
-
 import { GoogleGenAI } from "@google/genai";
 import { TIKZ_SNIPPETS_CONTEXT } from "../constants";
 
-const PRO_MODEL = "gemini-3-pro-preview"; 
-const FAST_MODEL = "gemini-3-flash-preview";
+// ============================================================================
+// CẤU HÌNH MODEL GEMINI 2.5 (THEO YÊU CẦU CỦA THẦY)
+// Lưu ý: Hãy đảm bảo thầy đã được cấp quyền truy cập các Model này trong Google AI Studio
+// ============================================================================
+const PRO_MODEL = "gemini-2.5-pro";   // Model tư duy sâu, mạnh nhất
+const FAST_MODEL = "gemini-2.5-flash"; // Model tốc độ cao, dùng để vẽ SVG nhanh
+
+// Lấy API Key chuẩn từ biến môi trường của Vercel/Vite
+const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 
 const SYSTEM_INSTRUCTION = `
 Bạn là một chuyên gia soạn thảo tài liệu Toán học và Kỹ thuật, bậc thầy về TikZ và SVG.
@@ -33,25 +39,30 @@ const extractTikz = (text: string) => {
 
 const extractSvg = (text: string) => {
   let clean = text.trim();
-  // Tìm thẻ mở <svg
   const startIdx = clean.indexOf('<svg');
   if (startIdx === -1) return "";
-  
-  // Tìm thẻ đóng </svg> cuối cùng
   const endIdx = clean.lastIndexOf('</svg>');
-  if (endIdx === -1) return clean.substring(startIdx); // Trường hợp đang stream dở
-  
+  if (endIdx === -1) return clean.substring(startIdx);
   return clean.substring(startIdx, endIdx + 6);
+};
+
+// Hàm khởi tạo AI Client an toàn
+const getAIClient = () => {
+  if (!API_KEY) {
+    throw new Error("Chưa cấu hình VITE_GEMINI_API_KEY trong file .env hoặc Vercel Settings!");
+  }
+  return new GoogleGenAI({ apiKey: API_KEY });
 };
 
 export const generateTikzFromDescription = async (description: string, deepReason: boolean = false): Promise<string> => {
   try {
-    // Create a new instance right before call as per guidelines
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = getAIClient();
     const config: any = {
       systemInstruction: SYSTEM_INSTRUCTION,
       temperature: deepReason ? 0.2 : 0.1,
     };
+    
+    // Cấu hình Thinking cho Gemini 2.5 Pro (nếu hỗ trợ)
     if (deepReason) config.thinkingConfig = { thinkingBudget: 10000 };
 
     const response = await ai.models.generateContent({
@@ -61,14 +72,14 @@ export const generateTikzFromDescription = async (description: string, deepReaso
     });
     return extractTikz(response.text || "");
   } catch (error) {
-    throw new Error("Không thể tạo mã TikZ. Vui lòng thử lại.");
+    console.error("Lỗi tạo TikZ:", error);
+    throw new Error("Không thể tạo mã TikZ. Vui lòng kiểm tra lại API Key hoặc tên Model 2.5.");
   }
 };
 
 export const generateDescriptionFromImage = async (base64Image: string): Promise<string> => {
   try {
-    // Create a new instance right before call as per guidelines
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = getAIClient();
     const match = base64Image.match(/^data:(.+);base64,(.+)$/);
     if (!match) throw new Error("Ảnh không hợp lệ");
     
@@ -97,13 +108,12 @@ export const generateSvgFromTikz = async (
   onChunk?: (chunk: string) => void
 ): Promise<string> => {
   try {
-    // Create a new instance right before call as per guidelines
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = getAIClient();
     const prompt = `Bạn là một trình biên dịch TikZ sang SVG. Hãy vẽ hình ảnh SVG từ mã TikZ sau đây. 
 YÊU CẦU CỰC KỲ QUAN TRỌNG:
-1. Phải tính toán chính xác tọa độ, đặc biệt là các phép chiếu (projection) và trung điểm.
+1. Phải tính toán chính xác tọa độ, đặc biệt là các phép chiếu và trung điểm.
 2. Hình học phẳng: Dùng toàn bộ NÉT LIỀN (solid lines). KHÔNG ĐƯỢC CÓ NÉT ĐỨT.
-3. Chỉ trả về duy nhất mã <svg>...</svg>. Không thêm văn bản giải thích nào khác.
+3. Chỉ trả về duy nhất mã <svg>...</svg>. Không thêm văn bản giải thích.
 
 Mã TikZ cần vẽ:\n${tikzCode}`;
     
@@ -116,9 +126,10 @@ Mã TikZ cần vẽ:\n${tikzCode}`;
       config.thinkingConfig = { thinkingBudget: 15000 };
     }
 
+    // Sử dụng Model Flash cho tốc độ vẽ nhanh
     if (onChunk) {
       const result = await ai.models.generateContentStream({
-        model: FAST_MODEL,
+        model: FAST_MODEL, 
         contents: prompt,
         config
       });
@@ -138,14 +149,14 @@ Mã TikZ cần vẽ:\n${tikzCode}`;
       return extractSvg(response.text || "");
     }
   } catch (error) {
-    throw new Error("Lỗi biên dịch SVG. Vui lòng kiểm tra lại mã TikZ.");
+    console.error("Lỗi vẽ SVG:", error);
+    throw new Error("Lỗi biên dịch SVG. Vui lòng thử lại.");
   }
 };
 
 export const generateTikzFromImage = async (base64Image: string, deepReason: boolean = false): Promise<string> => {
   try {
-    // Create a new instance right before call as per guidelines
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = getAIClient();
     const match = base64Image.match(/^data:(.+);base64,(.+)$/);
     if (!match) throw new Error("Ảnh không hợp lệ");
     
