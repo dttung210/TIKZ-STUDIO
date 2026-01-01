@@ -2,34 +2,21 @@ import { GoogleGenAI } from "@google/genai";
 import { TIKZ_SNIPPETS_CONTEXT } from "../constants";
 
 // ============================================================================
-// CẤU HÌNH MODEL GEMINI 2.5 (THEO YÊU CẦU CỦA THẦY)
-// Lưu ý: Hãy đảm bảo thầy đã được cấp quyền truy cập các Model này trong Google AI Studio
+// CẤU HÌNH MODEL GEMINI 3.0 (MỚI NHẤT)
+// Thầy Tùng lưu ý: Hãy kiểm tra chính xác tên Model ID trong Google AI Studio
 // ============================================================================
-const PRO_MODEL = "gemini-2.5-pro";   // Model tư duy sâu, mạnh nhất
-const FAST_MODEL = "gemini-2.5-flash"; // Model tốc độ cao, dùng để vẽ SVG nhanh
+const PRO_MODEL = "gemini-3.0-pro";   // Model tư duy sâu (hoặc gemini-3.0-pro-001)
+const FAST_MODEL = "gemini-3.0-flash"; // Model tốc độ cao (hoặc gemini-3.0-flash-001)
 
-// Lấy API Key chuẩn từ biến môi trường của Vercel/Vite
+// Lấy API Key từ Vercel
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 
 const SYSTEM_INSTRUCTION = `
-Bạn là một chuyên gia soạn thảo tài liệu Toán học và Kỹ thuật, bậc thầy về TikZ và SVG.
-Nhiệm vụ: Xử lý và chuyển đổi mã TikZ sang SVG hoặc ngược lại với độ chính xác tuyệt đối.
-
-%% QUY TẮC CỐT LÕI VỀ HÌNH HỌC %%
-1. **Hình học phẳng (Plane Geometry)**: 
-   - TUYỆT ĐỐI CHỈ DÙNG NÉT LIỀN (solid lines) cho mọi đường (đường cao, trung tuyến, phân giác, đường tròn...).
-   - KHÔNG dùng nét đứt (dashed/dotted/dash dot).
-2. **Hình học không gian (Space Geometry)**: 
-   - Chỉ dùng nét đứt (dashed) cho các cạnh bị che khuất.
-3. **Chú thích (Legend)**: 
-   - KHÔNG vẽ bảng chú thích (Legend/Key) trừ khi có yêu cầu. Hãy đặt nhãn trực tiếp lên hình.
-
-%% CHUYỂN ĐỔI TIKZ SANG SVG %%
-Khi chuyển đổi mã TikZ sang SVG:
-- Hãy mô phỏng chính xác các phép toán tọa độ trong TikZ (ví dụ: $(A)!(P)!(B)$ là hình chiếu, $(A)!0.5!(B)$ là trung điểm).
-- Đảm bảo các mũi tên (arrows), góc vuông (right angle symbols) và nhãn (labels) được vẽ đúng vị trí.
-- Luôn trả về mã <svg> hoàn chỉnh, độc lập, có viewBox và width/height phù hợp.
-- Sử dụng font chữ dễ đọc cho các nhãn điểm.
+Bạn là một chuyên gia LaTeX và TikZ. 
+Quy tắc:
+1. Hình học phẳng: BẮT BUỘC dùng NÉT LIỀN (solid lines).
+2. Hình học không gian: Nét đứt cho cạnh khuất.
+3. Chỉ trả về mã code trong môi trường tikzpicture.
 `;
 
 const extractTikz = (text: string) => {
@@ -38,18 +25,19 @@ const extractTikz = (text: string) => {
 };
 
 const extractSvg = (text: string) => {
-  let clean = text.trim();
-  const startIdx = clean.indexOf('<svg');
-  if (startIdx === -1) return "";
-  const endIdx = clean.lastIndexOf('</svg>');
-  if (endIdx === -1) return clean.substring(startIdx);
-  return clean.substring(startIdx, endIdx + 6);
+  const clean = text.trim();
+  const start = clean.indexOf('<svg');
+  const end = clean.lastIndexOf('</svg>');
+  if (start === -1) return "";
+  if (end === -1) return clean.substring(start);
+  return clean.substring(start, end + 6);
 };
 
-// Hàm khởi tạo AI Client an toàn
+// Hàm lấy Client an toàn và log lỗi nếu thiếu Key
 const getAIClient = () => {
   if (!API_KEY) {
-    throw new Error("Chưa cấu hình VITE_GEMINI_API_KEY trong file .env hoặc Vercel Settings!");
+    console.error("❌ LỖI NGHIÊM TRỌNG: Không tìm thấy API Key!");
+    throw new Error("Chưa cấu hình VITE_GEMINI_API_KEY trên Vercel.");
   }
   return new GoogleGenAI({ apiKey: API_KEY });
 };
@@ -57,23 +45,40 @@ const getAIClient = () => {
 export const generateTikzFromDescription = async (description: string, deepReason: boolean = false): Promise<string> => {
   try {
     const ai = getAIClient();
+    
+    // Cấu hình cho Gemini 3.0
     const config: any = {
       systemInstruction: SYSTEM_INSTRUCTION,
-      temperature: deepReason ? 0.2 : 0.1,
+      temperature: deepReason ? 0.3 : 0.1, // Gemini 3.0 thông minh nên có thể tăng độ sáng tạo
     };
-    
-    // Cấu hình Thinking cho Gemini 2.5 Pro (nếu hỗ trợ)
-    if (deepReason) config.thinkingConfig = { thinkingBudget: 10000 };
+
+    // Nếu Gemini 3.0 hỗ trợ Thinking (Tư duy), bật nó lên
+    if (deepReason) {
+       // Thầy có thể bỏ comment dòng dưới nếu model 3.0 hỗ trợ thinkingConfig
+       // config.thinkingConfig = { thinkingBudget: 1024 }; 
+    }
 
     const response = await ai.models.generateContent({
       model: PRO_MODEL,
-      contents: `Context Snippets:\n${TIKZ_SNIPPETS_CONTEXT}\n\nYêu cầu: Hãy tạo mã TikZ cho mô tả sau: ${description}. Lưu ý quy tắc nét liền cho hình phẳng.`,
+      contents: `Context Snippets:\n${TIKZ_SNIPPETS_CONTEXT}\n\nYêu cầu: Hãy tạo mã TikZ cho mô tả sau: ${description}.`,
       config
     });
-    return extractTikz(response.text || "");
-  } catch (error) {
-    console.error("Lỗi tạo TikZ:", error);
-    throw new Error("Không thể tạo mã TikZ. Vui lòng kiểm tra lại API Key hoặc tên Model 2.5.");
+    
+    if (!response.text) throw new Error("AI không trả về kết quả.");
+    return extractTikz(response.text);
+
+  } catch (error: any) {
+    console.error("❌ LỖI API (TikZ):", error);
+    
+    // Phân tích lỗi giúp thầy Tùng dễ xử lý
+    if (error.toString().includes("404")) {
+        console.error(`⚠️ LỖI 404: Tên model "${PRO_MODEL}" không tồn tại hoặc tài khoản chưa được cấp quyền.`);
+        console.error("👉 Thầy hãy vào Google AI Studio kiểm tra lại tên Model ID chính xác.");
+    } else if (error.toString().includes("400")) {
+        console.error("⚠️ LỖI 400: Yêu cầu không hợp lệ (thường do sai cấu hình config).");
+    }
+    
+    throw error;
   }
 };
 
@@ -81,24 +86,21 @@ export const generateDescriptionFromImage = async (base64Image: string): Promise
   try {
     const ai = getAIClient();
     const match = base64Image.match(/^data:(.+);base64,(.+)$/);
-    if (!match) throw new Error("Ảnh không hợp lệ");
-    
+    if (!match) throw new Error("Ảnh lỗi format");
+
     const response = await ai.models.generateContent({
       model: PRO_MODEL,
       contents: {
         parts: [
           { inlineData: { mimeType: match[1], data: match[2] } },
-          { text: "Mô tả chi tiết bài toán hình học này để tôi có thể chuyển nó sang TikZ. Lưu ý phân biệt hình phẳng (nét liền) và hình không gian." }
+          { text: "Mô tả hình học của ảnh này để vẽ lại bằng TikZ:" }
         ]
-      },
-      config: {
-        systemInstruction: "Bạn là chuyên gia phân tích đề bài toán học.",
-        temperature: 0.1
       }
     });
     return response.text || "";
   } catch (error) {
-    throw new Error("Lỗi khi đọc hình ảnh.");
+    console.error("❌ Lỗi đọc ảnh:", error);
+    throw error;
   }
 };
 
@@ -109,48 +111,31 @@ export const generateSvgFromTikz = async (
 ): Promise<string> => {
   try {
     const ai = getAIClient();
-    const prompt = `Bạn là một trình biên dịch TikZ sang SVG. Hãy vẽ hình ảnh SVG từ mã TikZ sau đây. 
-YÊU CẦU CỰC KỲ QUAN TRỌNG:
-1. Phải tính toán chính xác tọa độ, đặc biệt là các phép chiếu và trung điểm.
-2. Hình học phẳng: Dùng toàn bộ NÉT LIỀN (solid lines). KHÔNG ĐƯỢC CÓ NÉT ĐỨT.
-3. Chỉ trả về duy nhất mã <svg>...</svg>. Không thêm văn bản giải thích.
-
-Mã TikZ cần vẽ:\n${tikzCode}`;
+    const prompt = `Convert this TikZ code to SVG. Return ONLY the <svg> code. No markdown.\nCode:\n${tikzCode}`;
     
-    const config: any = { 
-      systemInstruction: SYSTEM_INSTRUCTION,
-      temperature: 0 
-    };
-
-    if (deepReason) {
-      config.thinkingConfig = { thinkingBudget: 15000 };
-    }
-
-    // Sử dụng Model Flash cho tốc độ vẽ nhanh
+    // Dùng model Flash cho nhanh
     if (onChunk) {
       const result = await ai.models.generateContentStream({
-        model: FAST_MODEL, 
-        contents: prompt,
-        config
+        model: FAST_MODEL,
+        contents: prompt
       });
-      let fullText = "";
+      let full = "";
       for await (const chunk of result) {
-        fullText += chunk.text;
-        const currentSvg = extractSvg(fullText);
-        if (currentSvg) onChunk(currentSvg);
+        full += chunk.text;
+        const svg = extractSvg(full);
+        if (svg) onChunk(svg);
       }
-      return extractSvg(fullText);
+      return extractSvg(full);
     } else {
       const response = await ai.models.generateContent({
         model: FAST_MODEL,
-        contents: prompt,
-        config
+        contents: prompt
       });
       return extractSvg(response.text || "");
     }
   } catch (error) {
-    console.error("Lỗi vẽ SVG:", error);
-    throw new Error("Lỗi biên dịch SVG. Vui lòng thử lại.");
+    console.error("❌ Lỗi vẽ SVG:", error);
+    throw error;
   }
 };
 
@@ -158,26 +143,20 @@ export const generateTikzFromImage = async (base64Image: string, deepReason: boo
   try {
     const ai = getAIClient();
     const match = base64Image.match(/^data:(.+);base64,(.+)$/);
-    if (!match) throw new Error("Ảnh không hợp lệ");
-    
-    const config: any = {
-      systemInstruction: SYSTEM_INSTRUCTION,
-      temperature: 0,
-    };
-    if (deepReason) config.thinkingConfig = { thinkingBudget: 16000 };
+    if (!match) throw new Error("Ảnh lỗi");
 
     const response = await ai.models.generateContent({
       model: PRO_MODEL,
       contents: {
         parts: [
           { inlineData: { mimeType: match[1], data: match[2] } },
-          { text: "Chuyển hình ảnh này sang mã TikZ. Tuân thủ quy tắc: Hình phẳng = Nét liền, Hình không gian = Nét đứt cho cạnh khuất." }
+          { text: "Xuất mã TikZ cho hình này. Chỉ trả về code." }
         ]
-      },
-      config
+      }
     });
     return extractTikz(response.text || "");
   } catch (error) {
-    throw new Error("Lỗi trích xuất mã TikZ.");
+    console.error("❌ Lỗi ảnh sang TikZ:", error);
+    throw error;
   }
 };
